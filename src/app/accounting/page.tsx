@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import Link from "next/link";
+import React, { useState, useMemo, useEffect, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { 
   Building2, 
   Receipt, 
@@ -17,6 +17,7 @@ import {
   Trash2,
   Printer,
   Folder,
+  FolderOpen,
   FileText,
   Wallet,
   TrendingUp,
@@ -25,9 +26,14 @@ import {
   FileSpreadsheet,
   Target,
   FolderPlus,
-  GitFork,
   ArrowRight,
-  Pencil
+  Pencil,
+  ChevronDown,
+  ChevronRight,
+  CreditCard,
+  ArrowRightLeft,
+  DollarSign,
+  AlertTriangle
 } from "lucide-react";
 import { INITIAL_CHART_OF_ACCOUNTS } from "@/lib/default-accounts";
 import { INITIAL_COST_CENTERS } from "@/lib/default-cost-centers";
@@ -39,8 +45,13 @@ import {
   generateTrialBalance 
 } from "@/lib/accounting-engine";
 
-export default function AccountingPage() {
-  const [activeTab, setActiveTab] = useState<"chart" | "entries" | "trial" | "cost_centers">("chart");
+function AccountingPageContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  type TabType = "chart" | "cost_centers" | "banks" | "entries" | "trial";
+  const [activeTab, setActiveTab] = useState<TabType>("chart");
+
   const [accounts, setAccounts] = useState<Account[]>(INITIAL_CHART_OF_ACCOUNTS);
   const [costCenters, setCostCenters] = useState<CostCenter[]>(INITIAL_COST_CENTERS);
   
@@ -89,9 +100,41 @@ export default function AccountingPage() {
     },
   ]);
 
+  // Read URL params on load or change
+  useEffect(() => {
+    const tabParam = searchParams.get("tab") as TabType;
+    if (tabParam && ["chart", "cost_centers", "banks", "entries", "trial"].includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+
+    const actionParam = searchParams.get("action");
+    if (actionParam === "new_entry") {
+      setShowNewEntryModal(true);
+    } else if (actionParam === "new_cost_center") {
+      openAddCostCenter();
+    } else if (actionParam === "new_account") {
+      openAddSubAccountModal();
+    }
+  }, [searchParams]);
+
+  // Switch Tab Handler with URL sync
+  const handleSwitchTab = (tab: TabType) => {
+    setActiveTab(tab);
+    window.history.replaceState(null, "", `/accounting?tab=${tab}`);
+  };
+
   // Filters for Chart of Accounts
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("ALL");
+
+  // Collapsed accounts state (for expandable tree view)
+  const [collapsedIds, setCollapsedIds] = useState<Record<string, boolean>>({});
+  const toggleCollapse = (accId: string) => {
+    setCollapsedIds((prev) => ({ ...prev, [accId]: !prev[accId] }));
+  };
+
+  // Statement / Ledger modal state
+  const [selectedAccountForStatement, setSelectedAccountForStatement] = useState<Account | null>(null);
 
   // ==========================================
   // MODAL 1: ADD SUB-ACCOUNT (إضافة حساب فرعي)
@@ -103,12 +146,10 @@ export default function AccountingPage() {
   const [newAccNameEn, setNewAccNameEn] = useState("");
   const [newAccDesc, setNewAccDesc] = useState("");
 
-  // Select Parent Account and Auto-generate next code
   const handleSelectParentForNewAccount = (parentId: string) => {
     setNewAccParentId(parentId);
     const parent = accounts.find((a) => a.id === parentId);
     if (parent) {
-      // Find existing children to generate next code
       const siblings = accounts.filter((a) => a.parentId === parentId);
       let nextSuffix = "01";
       if (siblings.length > 0) {
@@ -120,101 +161,105 @@ export default function AccountingPage() {
     }
   };
 
-  // Open modal with specific parent
-  const openAddSubAccountModal = (parent?: Account) => {
-    const pId = parent ? parent.id : (accounts.find(a => !a.isLeaf)?.id || "");
-    handleSelectParentForNewAccount(pId);
+  const openAddSubAccountModal = (parentAcc?: Account) => {
+    const parent = parentAcc || accounts.find((a) => !a.isLeaf) || accounts[0];
+    if (parent) {
+      handleSelectParentForNewAccount(parent.id);
+    }
     setNewAccNameAr("");
     setNewAccNameEn("");
     setNewAccDesc("");
     setShowAddAccountModal(true);
   };
 
-  // Save New Sub-Account
   const handleSaveSubAccount = () => {
-    if (!newAccParentId || !newAccNameAr || !newAccCode) {
-      alert("يرجى ملء الحساب الأب، كود الحساب، واسم الحساب بالعربية.");
+    if (!newAccCode || !newAccNameAr || !newAccParentId) {
+      alert("يرجى ملء جميع الحقول الإلزامية.");
       return;
     }
 
-    const parent = accounts.find((a) => a.id === newAccParentId)!;
+    const parent = accounts.find((a) => a.id === newAccParentId);
+    if (!parent) return;
+
+    if (accounts.some((a) => a.code === newAccCode)) {
+      alert(`كود الحساب ${newAccCode} موجود بالفعل! يرجى اختيار كود آخر.`);
+      return;
+    }
 
     const newAccount: Account = {
-      id: `acc-${Date.now()}`,
+      id: `acc-${newAccCode}`,
       code: newAccCode,
       nameAr: newAccNameAr,
       nameEn: newAccNameEn || newAccNameAr,
       type: parent.type,
       nature: parent.nature,
-      parentId: parent.id,
       level: parent.level + 1,
+      parentId: parent.id,
       isLeaf: true,
-      description: newAccDesc || `حساب فرعي تابع لـ ${parent.nameAr}`,
       balance: 0,
+      description: newAccDesc || `حساب فرعي تابع لـ ${parent.nameAr}`,
+      isActive: true,
     };
 
-    // If parent was a leaf account, it now becomes a non-leaf parent
-    const updatedAccounts = accounts.map((acc) => 
-      acc.id === parent.id ? { ...acc, isLeaf: false } : acc
-    );
+    const updatedAccounts = accounts.map((a) => {
+      if (a.id === parent.id && a.isLeaf) {
+        return { ...a, isLeaf: false };
+      }
+      return a;
+    });
 
-    // Insert after the parent and its existing children
-    setAccounts([...updatedAccounts, newAccount].sort((a, b) => a.code.localeCompare(b.code)));
+    setAccounts([...updatedAccounts, newAccount]);
     setShowAddAccountModal(false);
   };
 
   // ==========================================
-  // EDIT ACCOUNT STATE & HANDLER (تعديل حساب)
+  // EDIT & DELETE ACCOUNT HANDLERS
   // ==========================================
   const [showEditAccountModal, setShowEditAccountModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
-  const [editNameAr, setEditNameAr] = useState("");
-  const [editNameEn, setEditNameEn] = useState("");
-  const [editDesc, setEditDesc] = useState("");
+  const [editAccNameAr, setEditAccNameAr] = useState("");
+  const [editAccNameEn, setEditAccNameEn] = useState("");
+  const [editAccDesc, setEditAccDesc] = useState("");
 
   const handleOpenEditAccount = (acc: Account) => {
     setEditingAccount(acc);
-    setEditNameAr(acc.nameAr);
-    setEditNameEn(acc.nameEn);
-    setEditDesc(acc.description);
+    setEditAccNameAr(acc.nameAr);
+    setEditAccNameEn(acc.nameEn);
+    setEditAccDesc(acc.description || "");
     setShowEditAccountModal(true);
   };
 
   const handleSaveEditAccount = () => {
-    if (!editingAccount || !editNameAr) {
-      alert("يرجى إدخال اسم الحساب بالعربية.");
-      return;
-    }
+    if (!editingAccount || !editAccNameAr) return;
     setAccounts(accounts.map((a) => 
       a.id === editingAccount.id 
-        ? { ...a, nameAr: editNameAr, nameEn: editNameEn || editNameAr, description: editDesc }
+        ? { ...a, nameAr: editAccNameAr, nameEn: editAccNameEn || editAccNameAr, description: editAccDesc } 
         : a
     ));
     setShowEditAccountModal(false);
   };
 
-  // ==========================================
-  // DELETE ACCOUNT WITH INTEGRITY CHECKS (حذف حساب)
-  // ==========================================
   const handleDeleteAccount = (acc: Account) => {
-    // 1. فحص وجود حسابات فرعية
     const hasChildren = accounts.some((a) => a.parentId === acc.id);
     if (hasChildren) {
-      alert(`⚠️ لا يمكن حذف الحساب "${acc.nameAr}" (كود: ${acc.code}):\nلأنه حساب رئيسي يحتوي على حسابات فرعية تحته. يرجى حذف الحسابات الفرعية أولاً.`);
+      alert(`⚠️ لا يمكن حذف الحساب [${acc.nameAr}] كود (${acc.code}) لأنه يحتوي على حسابات فرعية متفرعة منه.`);
       return;
     }
 
-    // 2. فحص وجود حركات بالدفاتر أو رصيد مالي
-    const hasEntries = entries.some((entry) => 
-      entry.lines.some((line) => line.accountId === acc.id)
+    if (acc.balance !== 0) {
+      alert(`⚠️ لا يمكن حذف الحساب [${acc.nameAr}] لأن رصيده الدفتري ليس صفراً (${acc.balance.toLocaleString("ar-EG")} ج.م).`);
+      return;
+    }
+
+    const hasJournalLines = entries.some((je) => 
+      je.lines.some((l) => l.accountId === acc.id || l.accountCode === acc.code)
     );
-    if (hasEntries || Math.abs(acc.balance) > 0.001) {
-      alert(`🔒 حظر محاسبي: لا يمكن حذف الحساب "${acc.nameAr}" (كود: ${acc.code}):\nتوجد قيود يومية مسجلة على هذا الحساب أو يوجد رصيد مالي (${acc.balance.toLocaleString('ar-EG')} ج.م).\nلحفظ سلامة ميزان المراجعة والنزاهة القانونية، لا يقبل النظام حذف الحسابات التي تمت عليها حركات مالية.`);
+    if (hasJournalLines) {
+      alert(`⚠️ حماية تدقيقية: لا يمكن حذف الحساب [${acc.nameAr}] لأنه مسجل به حركات وقيود يومية سابقة.`);
       return;
     }
 
-    // 3. تأكيد الحذف
-    if (confirm(`هل أنت متأكد من رغبتك في حذف الحساب "${acc.nameAr}" (كود: ${acc.code}) نهائياً من شجرة الحسابات؟`)) {
+    if (confirm(`هل أنت متأكد من رغبتك في حذف الحساب [${acc.nameAr}] كود: ${acc.code} نهائياً؟`)) {
       setAccounts(accounts.filter((a) => a.id !== acc.id));
     }
   };
@@ -275,15 +320,6 @@ export default function AccountingPage() {
     { accountId: "", debit: 0, credit: 0, description: "", costCenterId: "" },
     { accountId: "", debit: 0, credit: 0, description: "", costCenterId: "" },
   ]);
-
-  // Filtered accounts for display
-  const filteredAccounts = useMemo(() => {
-    return accounts.filter((acc) => {
-      const matchesSearch = acc.nameAr.includes(searchQuery) || acc.code.includes(searchQuery);
-      const matchesType = typeFilter === "ALL" || acc.type === typeFilter;
-      return matchesSearch && matchesType;
-    });
-  }, [accounts, searchQuery, typeFilter]);
 
   // Leaf accounts for entry posting
   const leafAccounts = useMemo(() => accounts.filter((a) => a.isLeaf), [accounts]);
@@ -354,62 +390,103 @@ export default function AccountingPage() {
       createdBy: "م. محمد جمعة",
     };
 
-    // Update Accounts
     setEntries([newEntry, ...entries]);
     setAccounts(calculateUpdatedAccountBalances(accounts, formattedLines));
 
-    // Update Cost Centers (if any line has a cost center attached)
-    const updatedCCs = costCenters.map((cc) => {
-      let addDebit = 0;
-      let addCredit = 0;
-      formattedLines.forEach((l) => {
-        if (l.costCenterId === cc.id) {
-          addDebit += l.debit;
-          addCredit += l.credit;
-        }
-      });
-      const newDebit = cc.totalDebit + addDebit;
-      const newCredit = cc.totalCredit + addCredit;
-      return {
-        ...cc,
-        totalDebit: newDebit,
-        totalCredit: newCredit,
-        netProfit: newCredit - newDebit,
-      };
-    });
-    setCostCenters(updatedCCs);
-
-    // Reset Form
     setShowNewEntryModal(false);
     setEntryDesc("");
     setEntryLines([
       { accountId: "", debit: 0, credit: 0, description: "", costCenterId: "" },
       { accountId: "", debit: 0, credit: 0, description: "", costCenterId: "" },
     ]);
+
+    // Switch to entries tab to view the posted entry
+    handleSwitchTab("entries");
   };
 
-  // Reversal Entry
+  // Reverse Entry Handler
   const handleReverseEntry = (entry: JournalEntry) => {
-    const reason = prompt("يرجى إدخال سبب إلغاء وعكس هذا القيد المحاسبي:", "تصحيح قيد يدوي");
-    if (!reason) return;
-
-    const revEntry = createReversalJournalEntry(entry, reason, "م. محمد جمعة");
-    const updatedEntries = entries.map((e) => 
-      e.id === entry.id ? { ...e, status: "REVERSED" as const } : e
-    );
-
-    setEntries([revEntry, ...updatedEntries]);
-    setAccounts(calculateUpdatedAccountBalances(accounts, revEntry.lines));
+    if (confirm(`هل أنت متأكد من عكس وإلغاء القيد [${entry.entryNumber}]؟ سيتم توليد قيد عكسي معتمد.`)) {
+      const reversal = createReversalJournalEntry(entry, "عكس قيد بتوجيه الإدارة المالية", "م. محمد جمعة");
+      setEntries([reversal, ...entries.map((e) => e.id === entry.id ? { ...e, status: "REVERSED" as const } : e)]);
+      setAccounts(calculateUpdatedAccountBalances(accounts, reversal.lines));
+    }
   };
 
-  // Calculate Trial Balance
-  const trialBalance = useMemo(() => generateTrialBalance(accounts), [accounts]);
+  // ==========================================
+  // MODAL 4: BANK & CASH TRANSFER (تحويل أموال)
+  // ==========================================
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferFromAcc, setTransferFromAcc] = useState("acc-110101");
+  const [transferToAcc, setTransferToAcc] = useState("acc-110102");
+  const [transferAmount, setTransferAmount] = useState<number>(10000);
+  const [transferDesc, setTransferDesc] = useState("إيداع نقدي من الخزينة لحساب البنك CIB");
 
-  // Cash & Banks
+  const handleExecuteTransfer = () => {
+    if (transferAmount <= 0) {
+      alert("يرجى إدخال مبلغ صحيح للتحويل.");
+      return;
+    }
+    if (transferFromAcc === transferToAcc) {
+      alert("لا يمكن التحويل لنفس الحساب.");
+      return;
+    }
+
+    const fromAcc = accounts.find((a) => a.id === transferFromAcc);
+    const toAcc = accounts.find((a) => a.id === transferToAcc);
+    if (!fromAcc || !toAcc) return;
+
+    const entryLines: JournalEntryLine[] = [
+      {
+        id: `tl-1-${Date.now()}`,
+        accountId: toAcc.id,
+        accountCode: toAcc.code,
+        accountNameAr: toAcc.nameAr,
+        debit: transferAmount,
+        credit: 0,
+        description: `استلام تحويل من ${fromAcc.nameAr}`,
+      },
+      {
+        id: `tl-2-${Date.now()}`,
+        accountId: fromAcc.id,
+        accountCode: fromAcc.code,
+        accountNameAr: fromAcc.nameAr,
+        debit: 0,
+        credit: transferAmount,
+        description: `تحويل صادر إلى ${toAcc.nameAr}`,
+      },
+    ];
+
+    const transferEntry: JournalEntry = {
+      id: `je-transfer-${Date.now()}`,
+      entryNumber: `JV-TRF-${Date.now().toString().slice(-4)}`,
+      date: new Date().toISOString().split("T")[0],
+      description: transferDesc,
+      referenceType: "BANK_TRANSFER",
+      status: "POSTED",
+      lines: entryLines,
+      totalDebit: transferAmount,
+      totalCredit: transferAmount,
+      createdAt: new Date().toISOString(),
+      createdBy: "أمين الخزينة والحسابات",
+    };
+
+    setEntries([transferEntry, ...entries]);
+    setAccounts(calculateUpdatedAccountBalances(accounts, entryLines));
+    setShowTransferModal(false);
+    alert(`✅ تم إتمام التحويل المالي (${transferAmount.toLocaleString("ar-EG")} ج.م) وقيده في الدفاتر بنجاح!`);
+  };
+
+  // Trial Balance calculation
+  const trialBalance = useMemo(() => {
+    return generateTrialBalance(accounts);
+  }, [accounts]);
+
+  // Cash and Bank Balances
   const cashAndBanksBalance = useMemo(() => {
-    const cash = accounts.find((a) => a.code === "110101")?.balance || 0;
-    const bank = accounts.find((a) => a.code === "110102")?.balance || 0;
-    return cash + bank;
+    return accounts
+      .filter((a) => a.code.startsWith("1101") && a.isLeaf)
+      .reduce((sum, a) => sum + a.balance, 0);
   }, [accounts]);
 
   const accountTypeNames: Record<string, string> = {
@@ -423,180 +500,232 @@ export default function AccountingPage() {
   const costCenterTypeNames: Record<string, string> = {
     PRODUCTION_LINE: "خط إنتاج وتصنيع",
     SALES_CHANNEL: "قناة مبيعات وتوزيع",
-    ADMIN: "إدارة ومصنع عام",
-    OTHER: "أخرى",
+    ADMINISTRATIVE: "إداري وعمومي",
   };
 
-  return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+  // Filtered accounts for display
+  const filteredAccounts = useMemo(() => {
+    return accounts.filter((acc) => {
+      const matchesSearch = acc.nameAr.includes(searchQuery) || acc.code.includes(searchQuery);
+      const matchesType = typeFilter === "ALL" || acc.type === typeFilter;
       
-      {/* Daftra Top Action Bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200/90 shadow-xs">
+      // If a parent is collapsed, check if this account is a descendant of a collapsed account
+      if (acc.parentId && collapsedIds[acc.parentId]) {
+        return false;
+      }
+
+      return matchesSearch && matchesType;
+    });
+  }, [accounts, searchQuery, typeFilter, collapsedIds]);
+
+  return (
+    <div className="space-y-6">
+      
+      {/* ========================================================================= */}
+      {/* 1. TOP HEADER & BREADCRUMBS & ACTION BUTTONS                              */}
+      {/* ========================================================================= */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
         <div>
-          <div className="flex items-center gap-2 text-xs text-slate-500 mb-1">
-            <Link href="/" className="hover:text-emerald-700 transition-colors">الرئيسية</Link>
+          <nav className="flex items-center gap-1.5 text-xs text-slate-500 mb-1.5 font-medium">
+            <span>الرئيسية</span>
             <span>/</span>
-            <span className="text-slate-800 font-bold">الحسابات العامة</span>
+            <span className="text-blue-700 font-bold">الحسابات العامة ومراكز التكلفة</span>
+          </nav>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-200">
+              <Layers className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                الحسابات العامة، القيود، ومراكز التكلفة
+              </h1>
+              <p className="text-xs text-slate-500 mt-0.5">
+                دليل وشجرة الحسابات، دفاتر القيود اليومية، ميزان المراجعة، ومراكز ربحية خطوط الإنتاج
+              </p>
+            </div>
           </div>
-          <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
-            الحسابات العامة ومراكز التكلفة
-          </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Add Sub-Account Button */}
           <button
             onClick={() => openAddSubAccountModal()}
-            className="inline-flex items-center justify-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg shadow-xs transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
           >
-            <FolderPlus className="w-4 h-4 text-emerald-600 shrink-0" />
+            <FolderPlus className="w-4 h-4 text-emerald-600" />
             <span>+ إضافة حساب فرعي</span>
           </button>
 
           {/* Add Cost Center Button */}
           <button
             onClick={openAddCostCenter}
-            className="inline-flex items-center justify-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg shadow-xs transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg transition-colors cursor-pointer"
           >
-            <Target className="w-4 h-4 text-purple-600 shrink-0" />
+            <Target className="w-4 h-4 text-purple-600" />
             <span>+ مركز تكلفة</span>
           </button>
 
           {/* Add Journal Entry Button */}
           <button
             onClick={() => setShowNewEntryModal(true)}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs transition-all cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs transition-colors cursor-pointer"
           >
-            <Plus className="w-4 h-4 shrink-0" />
-            <span>أضف قيد يومية</span>
+            <Plus className="w-4 h-4" />
+            <span>+ أضف قيد يومية</span>
           </button>
         </div>
       </div>
 
-      {/* Daftra Metric Cards */}
+      {/* ========================================================================= */}
+      {/* 2. DAFTRA 4 SUMMARY KPI CARDS                                            */}
+      {/* ========================================================================= */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
         {/* Card 1: Cash & Banks */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-xs flex items-center justify-between">
+        <div 
+          onClick={() => handleSwitchTab("banks")}
+          className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between cursor-pointer hover:border-emerald-500 transition-all"
+        >
           <div className="space-y-1">
             <span className="block text-xs font-medium text-slate-500">النقدية والبنوك المتاحة</span>
-            <span className="text-lg font-extrabold font-mono text-emerald-700 block tracking-tight">
+            <span className="text-2xl font-black font-mono text-emerald-700 block tracking-tight">
               {cashAndBanksBalance.toLocaleString("ar-EG")} <span className="text-xs font-sans text-slate-500 font-normal">ج.م</span>
             </span>
-            <span className="text-[10px] text-slate-400 block">الخزينة (50k) + البنك CIB (200k)</span>
+            <span className="text-[11px] text-slate-400 block">الخزينة (50k) + البنك CIB (200k)</span>
           </div>
-          <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-100/80">
-            <Wallet className="w-5 h-5" />
+          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-100">
+            <Wallet className="w-6 h-6" />
           </div>
         </div>
 
         {/* Card 2: Total Assets */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-xs flex items-center justify-between">
+        <div 
+          onClick={() => handleSwitchTab("chart")}
+          className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between cursor-pointer hover:border-blue-500 transition-all"
+        >
           <div className="space-y-1">
             <span className="block text-xs font-medium text-slate-500">إجمالي الأصول (المدينة)</span>
-            <span className="text-lg font-extrabold font-mono text-blue-700 block tracking-tight">
+            <span className="text-2xl font-black font-mono text-blue-700 block tracking-tight">
               {trialBalance.totalDebit.toLocaleString("ar-EG")} <span className="text-xs font-sans text-slate-500 font-normal">ج.م</span>
             </span>
-            <span className="text-[10px] text-slate-400 block">نقدية + مخازن خامات ومواد</span>
+            <span className="text-[11px] text-slate-400 block">نقدية + مخازن خامات ومواد</span>
           </div>
-          <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-100/80">
-            <TrendingUp className="w-5 h-5" />
+          <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center border border-blue-100">
+            <TrendingUp className="w-6 h-6" />
           </div>
         </div>
 
         {/* Card 3: Active Cost Centers */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-xs flex items-center justify-between">
+        <div 
+          onClick={() => handleSwitchTab("cost_centers")}
+          className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between cursor-pointer hover:border-purple-500 transition-all"
+        >
           <div className="space-y-1">
             <span className="block text-xs font-medium text-slate-500">مراكز التكلفة النشطة</span>
-            <span className="text-lg font-extrabold font-mono text-purple-700 block tracking-tight">
+            <span className="text-2xl font-black font-mono text-purple-700 block tracking-tight">
               {costCenters.length} <span className="text-xs font-sans text-slate-500 font-normal">مراكز</span>
             </span>
-            <span className="text-[10px] text-slate-400 block">خطوط إنتاج وقنوات مبيعات</span>
+            <span className="text-[11px] text-purple-700 font-bold block">خطوط إنتاج وقنوات مبيعات</span>
           </div>
-          <div className="w-11 h-11 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 border border-purple-100/80">
-            <Target className="w-5 h-5" />
+          <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center border border-purple-100">
+            <Target className="w-6 h-6" />
           </div>
         </div>
 
         {/* Card 4: Accounting Balance Status */}
-        <div className={`p-4 rounded-xl border shadow-xs flex items-center justify-between ${
-          trialBalance.isBalanced 
-            ? "bg-emerald-50/70 border-emerald-200" 
-            : "bg-red-50 border-red-200"
-        }`}>
+        <div 
+          onClick={() => handleSwitchTab("trial")}
+          className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between cursor-pointer hover:border-emerald-500 transition-all"
+        >
           <div className="space-y-1">
             <span className="block text-xs font-bold text-slate-700">توازن الدفاتر المحاسبية</span>
-            <span className={`text-sm font-extrabold block ${
-              trialBalance.isBalanced ? "text-emerald-800" : "text-red-700"
-            }`}>
+            <span className="text-sm font-extrabold text-emerald-800 block">
               {trialBalance.isBalanced ? "متطابق ومتوازن 100%" : "يوجد فارق غير متوازن"}
             </span>
-            <span className="text-[10px] text-slate-500 block">معادلة القيد المزدوج الإلزامية</span>
+            <span className="text-[11px] text-slate-500 block">معادلة القيد المزدوج الإلزامية</span>
           </div>
-          <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-            trialBalance.isBalanced ? "bg-emerald-600 text-white" : "bg-red-600 text-white"
-          }`}>
-            <Scale className="w-5 h-5" />
+          <div className="w-12 h-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center">
+            <Scale className="w-6 h-6" />
           </div>
         </div>
 
       </div>
 
-      {/* Daftra Sub-Navigation Tabs (Now 4 Tabs) */}
-      <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs overflow-hidden">
-        <div className="flex border-b border-slate-200 bg-slate-50/60 px-3 pt-2.5 gap-1.5 overflow-x-auto">
+      {/* ========================================================================= */}
+      {/* 3. 5 SUB-TABS NAVIGATION STRIP                                            */}
+      {/* ========================================================================= */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+        
+        <div className="flex border-b border-slate-200 px-4 gap-6 overflow-x-auto">
+          {/* Tab 1: Chart */}
           <button
-            onClick={() => setActiveTab("chart")}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 ${
+            onClick={() => handleSwitchTab("chart")}
+            className={`py-3.5 text-xs font-bold border-b-2 flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap ${
               activeTab === "chart"
-                ? "bg-white text-emerald-800 border-emerald-600 shadow-xs font-extrabold"
-                : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100/70"
+                ? "border-emerald-700 text-emerald-800 font-extrabold"
+                : "border-transparent text-slate-600 hover:text-slate-900"
             }`}
           >
-            <Layers className="w-4 h-4 text-emerald-600 shrink-0" />
+            <Layers className="w-4 h-4 text-emerald-600" />
             <span>دليل وشجرة الحسابات ({accounts.length})</span>
           </button>
 
+          {/* Tab 2: Cost Centers */}
           <button
-            onClick={() => setActiveTab("cost_centers")}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 ${
+            onClick={() => handleSwitchTab("cost_centers")}
+            className={`py-3.5 text-xs font-bold border-b-2 flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap ${
               activeTab === "cost_centers"
-                ? "bg-white text-purple-800 border-purple-600 shadow-xs font-extrabold"
-                : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100/70"
+                ? "border-purple-700 text-purple-800 font-extrabold"
+                : "border-transparent text-slate-600 hover:text-slate-900"
             }`}
           >
-            <Target className="w-4 h-4 text-purple-600 shrink-0" />
-            <span>مراكز التكلفة ({costCenters.length})</span>
+            <Target className="w-4 h-4 text-purple-600" />
+            <span>مراكز التكلفة وخطوط الإنتاج ({costCenters.length})</span>
           </button>
 
+          {/* Tab 3: Banks & Cash Boxes (NEW) */}
           <button
-            onClick={() => setActiveTab("entries")}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 ${
-              activeTab === "entries"
-                ? "bg-white text-emerald-800 border-emerald-600 shadow-xs font-extrabold"
-                : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100/70"
+            onClick={() => handleSwitchTab("banks")}
+            className={`py-3.5 text-xs font-bold border-b-2 flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap ${
+              activeTab === "banks"
+                ? "border-blue-700 text-blue-800 font-extrabold"
+                : "border-transparent text-slate-600 hover:text-slate-900"
             }`}
           >
-            <BookOpen className="w-4 h-4 text-emerald-600 shrink-0" />
+            <CreditCard className="w-4 h-4 text-blue-600" />
+            <span>الخزائن والحسابات البنكية (Cash & Banks)</span>
+          </button>
+
+          {/* Tab 4: Journal Entries */}
+          <button
+            onClick={() => handleSwitchTab("entries")}
+            className={`py-3.5 text-xs font-bold border-b-2 flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap ${
+              activeTab === "entries"
+                ? "border-emerald-700 text-emerald-800 font-extrabold"
+                : "border-transparent text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <BookOpen className="w-4 h-4 text-emerald-600" />
             <span>دفتر القيود اليومية ({entries.length})</span>
           </button>
 
+          {/* Tab 5: Trial Balance */}
           <button
-            onClick={() => setActiveTab("trial")}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 ${
+            onClick={() => handleSwitchTab("trial")}
+            className={`py-3.5 text-xs font-bold border-b-2 flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap ${
               activeTab === "trial"
-                ? "bg-white text-emerald-800 border-emerald-600 shadow-xs font-extrabold"
-                : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100/70"
+                ? "border-emerald-700 text-emerald-800 font-extrabold"
+                : "border-transparent text-slate-600 hover:text-slate-900"
             }`}
           >
-            <Scale className="w-4 h-4 text-emerald-600 shrink-0" />
+            <Scale className="w-4 h-4 text-emerald-600" />
             <span>ميزان المراجعة (Trial Balance)</span>
           </button>
         </div>
 
-        {/* ========================================== */}
-        {/* TAB 1: CHART OF ACCOUNTS (Tree View)       */}
-        {/* ========================================== */}
+        {/* ========================================================================= */}
+        {/* TAB 1: CHART OF ACCOUNTS (Tree View with Expand/Collapse)                 */}
+        {/* ========================================================================= */}
         {activeTab === "chart" && (
           <div className="p-4 space-y-4">
             
@@ -609,7 +738,7 @@ export default function AccountingPage() {
                   placeholder="ابحث برقم الكود أو اسم الحساب..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pr-9 pl-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="w-full pr-9 pl-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
                 />
               </div>
 
@@ -619,7 +748,7 @@ export default function AccountingPage() {
                   <button
                     key={type}
                     onClick={() => setTypeFilter(type)}
-                    className={`px-3 py-1.5 text-xs rounded-lg font-bold whitespace-nowrap transition-colors ${
+                    className={`px-3 py-1 text-xs rounded-lg font-bold whitespace-nowrap transition-colors cursor-pointer ${
                       typeFilter === type
                         ? "bg-emerald-700 text-white"
                         : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
@@ -648,6 +777,8 @@ export default function AccountingPage() {
                 <tbody className="divide-y divide-slate-100">
                   {filteredAccounts.map((acc) => {
                     const isParent = !acc.isLeaf;
+                    const isCollapsed = collapsedIds[acc.id];
+
                     return (
                       <tr 
                         key={acc.id}
@@ -658,48 +789,77 @@ export default function AccountingPage() {
                         <td className="py-2.5 px-4 font-mono font-bold text-slate-700">
                           {acc.code}
                         </td>
+
                         <td className="py-2.5 px-4">
                           <div 
-                            className="flex items-center gap-2"
+                            className="flex items-center gap-1.5"
                             style={{ paddingRight: `${(acc.level - 1) * 20}px` }}
                           >
-                            <div className="w-5 h-5 flex items-center justify-center shrink-0">
-                              {isParent ? (
-                                <Folder className="w-4 h-4 text-amber-500 shrink-0" />
-                              ) : (
-                                <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                              )}
-                            </div>
-                            <span className={isParent ? "font-bold text-slate-900" : "text-slate-700"}>
+                            {isParent ? (
+                              <button
+                                onClick={() => toggleCollapse(acc.id)}
+                                className="p-1 hover:bg-slate-200 rounded text-slate-500 cursor-pointer transition-colors"
+                                title={isCollapsed ? "توسيع الشجرة" : "طي الشجرة"}
+                              >
+                                {isCollapsed ? (
+                                  <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
+                                ) : (
+                                  <ChevronDown className="w-3.5 h-3.5 text-emerald-700" />
+                                )}
+                              </button>
+                            ) : (
+                              <span className="w-5 inline-block text-slate-300 text-center">•</span>
+                            )}
+
+                            {isParent ? (
+                              <Folder className={`w-4 h-4 shrink-0 ${isCollapsed ? "text-amber-500" : "text-amber-600"}`} />
+                            ) : (
+                              <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            )}
+
+                            <span 
+                              onClick={() => {
+                                if (acc.isLeaf) setSelectedAccountForStatement(acc);
+                              }}
+                              className={`cursor-pointer hover:text-emerald-700 transition-colors ${
+                                acc.level === 1 ? "text-sm font-black text-slate-900" : acc.isLeaf ? "text-slate-800 font-medium hover:underline" : "font-bold text-slate-800"
+                              }`}
+                            >
                               {acc.nameAr}
                             </span>
-                            <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
-                              ({acc.nameEn})
-                            </span>
+                            
+                            {acc.nameEn && (
+                              <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
+                                ({acc.nameEn})
+                              </span>
+                            )}
                           </div>
                         </td>
+
                         <td className="py-2.5 px-4">
-                          <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 inline-block">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
                             {accountTypeNames[acc.type]}
                           </span>
                         </td>
-                        <td className="py-2.5 px-4">
-                          <span className={`text-[11px] font-bold inline-flex items-center gap-1 ${
-                            acc.nature === "DEBIT" ? "text-blue-700" : "text-amber-700"
-                          }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${acc.nature === "DEBIT" ? "bg-blue-600" : "bg-amber-600"}`}></span>
-                            <span>{acc.nature === "DEBIT" ? "مدين (+)" : "دائن (-)"}</span>
-                          </span>
+
+                        <td className="py-2.5 px-4 text-xs font-mono">
+                          {acc.nature === "DEBIT" ? (
+                            <span className="text-blue-700 font-bold">• مدين (+)</span>
+                          ) : (
+                            <span className="text-amber-700 font-bold">• دائن (-)</span>
+                          )}
                         </td>
-                        <td className="py-2.5 px-4 text-slate-500 text-[11px]">
+
+                        <td className="py-2.5 px-4 text-xs">
                           {acc.isLeaf ? (
-                            <span className="text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded text-[10px] border border-emerald-200">
                               حساب تحليلي
                             </span>
                           ) : (
                             <span className="text-slate-600">رئيسي (مستوى {acc.level})</span>
                           )}
                         </td>
+
                         <td className="py-2.5 px-4 text-left font-mono font-bold">
                           {acc.isLeaf ? (
                             <span className={acc.balance > 0 ? "text-emerald-700 font-extrabold" : acc.balance < 0 ? "text-red-600 font-extrabold" : "text-slate-400"}>
@@ -709,6 +869,7 @@ export default function AccountingPage() {
                             <span className="text-slate-300">-</span>
                           )}
                         </td>
+
                         <td className="py-2.5 px-4 text-center">
                           <div className="flex items-center justify-center gap-1">
                             {/* 1. Add Sub-Account */}
@@ -749,20 +910,20 @@ export default function AccountingPage() {
           </div>
         )}
 
-        {/* ========================================== */}
-        {/* TAB 2: COST CENTERS (مراكز التكلفة)        */}
-        {/* ========================================== */}
+        {/* ========================================================================= */}
+        {/* TAB 2: COST CENTERS (مراكز التكلفة)                                       */}
+        {/* ========================================================================= */}
         {activeTab === "cost_centers" && (
           <div className="p-4 space-y-4">
             
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-purple-50/70 border border-purple-200 p-3.5 rounded-lg text-xs text-purple-950">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-purple-50/70 border border-purple-200 p-4 rounded-xl text-xs text-purple-950">
               <div className="flex items-center gap-2.5">
-                <Target className="w-5 h-5 text-purple-700 shrink-0" />
+                <Target className="w-6 h-6 text-purple-700 shrink-0" />
                 <div>
                   <strong className="block text-sm font-extrabold text-purple-900">
-                    مراكز التكلفة لمصنع العطور (Cost Centers P&L)
+                    مراكز التكلفة وخطوط الإنتاج (Cost Centers P&L)
                   </strong>
-                  <span className="text-slate-600 block mt-0.5">
+                  <span className="text-slate-600 block mt-0.5 leading-relaxed">
                     تتبع أرباح ومصروفات كل خط إنتاج عطور (فرنسي، شرقي، معطرات) وقنوات البيع (معرض الكاشير، متجر Shopify) بشكل مستقل.
                   </span>
                 </div>
@@ -770,10 +931,10 @@ export default function AccountingPage() {
 
               <button
                 onClick={openAddCostCenter}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-purple-700 hover:bg-purple-800 rounded-lg shadow-xs transition-all shrink-0 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-purple-700 hover:bg-purple-800 rounded-lg shadow-xs transition-all shrink-0 cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>إضافة خط إنتاج / مركز تكلفة</span>
+                <span>+ إضافة خط إنتاج / مركز تكلفة</span>
               </button>
             </div>
 
@@ -831,17 +992,165 @@ export default function AccountingPage() {
           </div>
         )}
 
-        {/* ========================================== */}
-        {/* TAB 3: JOURNAL ENTRIES (سجل القيود)       */}
-        {/* ========================================== */}
+        {/* ========================================================================= */}
+        {/* TAB 3: BANKS & CASH BOXES (الخزائن والحسابات البنكية)                      */}
+        {/* ========================================================================= */}
+        {activeTab === "banks" && (
+          <div className="p-4 space-y-6">
+            
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-blue-50 border border-blue-200 p-4 rounded-xl text-xs text-blue-950">
+              <div className="flex items-center gap-2.5">
+                <CreditCard className="w-6 h-6 text-blue-700 shrink-0" />
+                <div>
+                  <strong className="block text-sm font-extrabold text-blue-900">
+                    الخزائن النقدية، الحسابات البنكية، ووسطاء التحصيل الإلكتروني
+                  </strong>
+                  <span className="text-slate-600 block mt-0.5 leading-relaxed">
+                    إدارة السيولة النقدية بمصنع العطور، حساب البنك التجاري الدولي (CIB)، ومحافظ الدفع الإلكتروني وإنستاباي.
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowTransferModal(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg shadow-xs transition-all shrink-0 cursor-pointer"
+              >
+                <ArrowRightLeft className="w-4 h-4" />
+                <span>+ تحويل أموال بين الخزائن والبنوك</span>
+              </button>
+            </div>
+
+            {/* Treasury Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              
+              {/* Account 1: Main Cash Box */}
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-bold text-emerald-700">110101</span>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">نقدية كاش</span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-slate-900 text-sm">الخزينة الرئيسية للمصنع</h4>
+                  <p className="text-xs text-slate-500">مسؤول الخزينة: أمين الصندوق</p>
+                </div>
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-xs text-slate-500">الرصيد الفعلي:</span>
+                  <span className="font-mono text-base font-black text-emerald-700">50,000 ج.م</span>
+                </div>
+              </div>
+
+              {/* Account 2: CIB Bank Account */}
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-bold text-blue-700">110102</span>
+                  <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">بنك تجاري</span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-slate-900 text-sm">البنك التجاري الدولي (CIB)</h4>
+                  <p className="text-xs text-slate-500">حساب جارٍ رقم: 1000459821</p>
+                </div>
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-xs text-slate-500">الرصيد الدفتري:</span>
+                  <span className="font-mono text-base font-black text-blue-700">200,000 ج.م</span>
+                </div>
+              </div>
+
+              {/* Account 3: E-Wallets & InstaPay */}
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-bold text-purple-700">110103</span>
+                  <span className="text-[10px] bg-purple-100 text-purple-800 font-bold px-2 py-0.5 rounded-full">إنستاباي</span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-slate-900 text-sm">محافظ إلكترونية وإنستاباي</h4>
+                  <p className="text-xs text-slate-500">رقم الهاتف: 01099988776</p>
+                </div>
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-xs text-slate-500">الرصيد الحالي:</span>
+                  <span className="font-mono text-base font-bold text-slate-600">0.00 ج.م</span>
+                </div>
+              </div>
+
+              {/* Account 4: Paymob & Tap Gateway */}
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-bold text-amber-700">110204</span>
+                  <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">وسيط معلق</span>
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-slate-900 text-sm">وسيط بوابات الدفع (Paymob)</h4>
+                  <p className="text-xs text-slate-500">مبيعات متجر شوبيفاي المعلقة</p>
+                </div>
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-xs text-slate-500">الرصيد المعلق:</span>
+                  <span className="font-mono text-base font-black text-amber-700">3,477 ج.م</span>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Cash Movements Ledger */}
+            <div className="space-y-3">
+              <h3 className="text-xs font-extrabold text-slate-800">حركات القيود اليومية المؤثرة على الخزائن والبنوك:</h3>
+              <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-xs text-right">
+                  <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                    <tr>
+                      <th className="py-2.5 px-4 w-28">رقم القيد</th>
+                      <th className="py-2.5 px-4 w-28">التاريخ</th>
+                      <th className="py-2.5 px-4">البيان التوضيحي للحركة</th>
+                      <th className="py-2.5 px-4 w-44">الحساب المتأثر</th>
+                      <th className="py-2.5 px-4 text-left w-32">وارد (مدين)</th>
+                      <th className="py-2.5 px-4 text-left w-32">صادر (دائن)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {entries.flatMap((entry) => 
+                      entry.lines
+                        .filter((l) => l.accountCode.startsWith("1101") || l.accountCode.startsWith("1102"))
+                        .map((line, idx) => (
+                          <tr key={`${entry.id}-${idx}`} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-4 font-mono font-bold text-slate-700">{entry.entryNumber}</td>
+                            <td className="py-2.5 px-4 font-mono text-slate-500">{entry.date}</td>
+                            <td className="py-2.5 px-4 font-medium text-slate-900">{line.description || entry.description}</td>
+                            <td className="py-2.5 px-4 font-bold text-slate-800">{line.accountNameAr}</td>
+                            <td className="py-2.5 px-4 text-left font-mono font-bold text-emerald-700">
+                              {line.debit > 0 ? `${line.debit.toLocaleString("ar-EG")} ج.م` : "-"}
+                            </td>
+                            <td className="py-2.5 px-4 text-left font-mono font-bold text-red-600">
+                              {line.credit > 0 ? `${line.credit.toLocaleString("ar-EG")} ج.م` : "-"}
+                            </td>
+                          </tr>
+                        ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* TAB 4: JOURNAL ENTRIES (سجل القيود اليومية)                                */}
+        {/* ========================================================================= */}
         {activeTab === "entries" && (
           <div className="p-4 space-y-4">
             
-            <div className="bg-emerald-50/70 border border-emerald-200 p-3 rounded-lg text-xs text-emerald-900 flex items-center gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>
-                <strong>قاعدة النزاهة المالية المطبقة:</strong> جميع القيود بالدفاتر مقفلة ولا تحذف. أي تعديل يتم بإنشاء <strong>قيد عكس وتصحيح</strong> موثق بالسبب والتاريخ.
-              </span>
+            <div className="bg-emerald-50/70 border border-emerald-200 p-3 rounded-lg text-xs text-emerald-900 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  <strong>قاعدة النزاهة المالية:</strong> القيود اليومية المعتمدة غير قابلة للتعديل المباشر أو الحذف، ويتم تصحيحها عبر <strong>قيد عكس وتصحيح</strong>.
+                </span>
+              </div>
+              <button
+                onClick={() => setShowNewEntryModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>قيد جديد</span>
+              </button>
             </div>
 
             <div className="space-y-4">
@@ -879,7 +1188,7 @@ export default function AccountingPage() {
                       {entry.status === "POSTED" && !entry.isReversal && (
                         <button
                           onClick={() => handleReverseEntry(entry)}
-                          className="inline-flex items-center gap-1.5 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1 rounded-md transition-colors"
+                          className="inline-flex items-center gap-1.5 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1 rounded-md transition-colors cursor-pointer"
                         >
                           <RotateCcw className="w-3.5 h-3.5 shrink-0" />
                           <span>عكس وإلغاء القيد</span>
@@ -920,7 +1229,7 @@ export default function AccountingPage() {
                               <span className="text-slate-300 text-xs">-</span>
                             )}
                           </td>
-                          <td className="py-2.5 px-4 text-slate-500">{l.description || "-"}</td>
+                          <td className="py-2.5 px-4 text-slate-600 text-[11px]">{l.description}</td>
                           <td className="py-2.5 px-4 text-left font-mono font-bold text-blue-700">
                             {l.debit > 0 ? l.debit.toLocaleString("ar-EG") : "-"}
                           </td>
@@ -930,18 +1239,19 @@ export default function AccountingPage() {
                         </tr>
                       ))}
                     </tbody>
-                    <tfoot className="bg-slate-50 font-bold border-t border-slate-200 text-xs">
+                    <tfoot className="bg-slate-50 text-[11px] font-bold border-t border-slate-200">
                       <tr>
-                        <td colSpan={4} className="py-2.5 px-4 text-slate-700">الإجمالي المتوازن</td>
-                        <td className="py-2.5 px-4 text-left font-mono text-blue-800 font-extrabold">
+                        <td colSpan={4} className="py-2 px-4 text-slate-600">إجمالي القيد:</td>
+                        <td className="py-2 px-4 text-left font-mono font-black text-blue-800">
                           {entry.totalDebit.toLocaleString("ar-EG")} ج.م
                         </td>
-                        <td className="py-2.5 px-4 text-left font-mono text-amber-800 font-extrabold">
+                        <td className="py-2 px-4 text-left font-mono font-black text-amber-800">
                           {entry.totalCredit.toLocaleString("ar-EG")} ج.م
                         </td>
                       </tr>
                     </tfoot>
                   </table>
+
                 </div>
               ))}
             </div>
@@ -949,9 +1259,9 @@ export default function AccountingPage() {
           </div>
         )}
 
-        {/* ========================================== */}
-        {/* TAB 4: TRIAL BALANCE                       */}
-        {/* ========================================== */}
+        {/* ========================================================================= */}
+        {/* TAB 5: TRIAL BALANCE (ميزان المراجعة)                                     */}
+        {/* ========================================================================= */}
         {activeTab === "trial" && (
           <div className="p-4 space-y-4">
             
@@ -962,7 +1272,7 @@ export default function AccountingPage() {
               </span>
               <button
                 onClick={() => window.print()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg shadow-xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg shadow-xs cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5 text-slate-500" />
                 <span>طباعة التقرير</span>
@@ -1047,79 +1357,68 @@ export default function AccountingPage() {
                 <select
                   value={newAccParentId}
                   onChange={(e) => handleSelectParentForNewAccount(e.target.value)}
-                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-medium"
+                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
                 >
-                  <option value="">-- اختر الحساب الأب --</option>
-                  {accounts.map((acc) => (
-                    <option key={acc.id} value={acc.id}>
-                      {acc.code} - {acc.nameAr} ({accountTypeNames[acc.type]})
-                    </option>
-                  ))}
+                  {accounts
+                    .filter((a) => a.level < 4)
+                    .map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.nameAr} (مستوى {acc.level})
+                      </option>
+                    ))}
                 </select>
               </div>
 
-              {/* Account Code & Nature */}
-              <div className="grid grid-cols-2 gap-3">
+              {/* Code & Suffix */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">كود الحساب المنشأ تلقائياً *</label>
+                <input
+                  type="text"
+                  value={newAccCode}
+                  onChange={(e) => setNewAccCode(e.target.value)}
+                  className="w-full h-10 text-xs font-mono font-bold border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              {/* Arabic & English Name */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">كود الحساب المقترح *</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">اسم الحساب بالعربية *</label>
                   <input
                     type="text"
-                    value={newAccCode}
-                    onChange={(e) => setNewAccCode(e.target.value)}
-                    className="w-full h-10 text-xs font-mono font-bold border border-slate-300 rounded-lg px-3 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    placeholder="مثال: مخزن الزيوت الفرنسية، بنك مصر..."
+                    value={newAccNameAr}
+                    onChange={(e) => setNewAccNameAr(e.target.value)}
+                    className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">طبيعة الحساب (تلقائي)</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">اسم الحساب بالإنجليزية (اختياري)</label>
                   <input
                     type="text"
-                    disabled
-                    value={accounts.find(a => a.id === newAccParentId)?.nature === "DEBIT" ? "مدين (+)" : "دائن (-)"}
-                    className="w-full h-10 text-xs font-bold border border-slate-200 rounded-lg px-3 bg-slate-100 text-slate-600"
+                    placeholder="e.g. French Fragrance Oil Vault"
+                    value={newAccNameEn}
+                    onChange={(e) => setNewAccNameEn(e.target.value)}
+                    className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
-              </div>
-
-              {/* Arabic Name */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">اسم الحساب بالعربية *</label>
-                <input
-                  type="text"
-                  placeholder="مثال: زيت باتشولي إندونيسي نقي، زجاجات عطر 50 مل شفاف..."
-                  value={newAccNameAr}
-                  onChange={(e) => setNewAccNameAr(e.target.value)}
-                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              {/* English Name */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">اسم الحساب بالإنجليزية (اختياري)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Pure Indonesian Patchouli Oil"
-                  value={newAccNameEn}
-                  onChange={(e) => setNewAccNameEn(e.target.value)}
-                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
               </div>
 
               {/* Description */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">الوصف أو الملاحظات</label>
-                <input
-                  type="text"
-                  placeholder="ملاحظات توضيحية حول طبيعة الصنف أو الحساب..."
+                <label className="block text-xs font-bold text-slate-700 mb-1">وصف الحساب والغرض منه</label>
+                <textarea
+                  rows={2}
+                  placeholder="ملاحظات حول طبيعة الحساب واستخداماته..."
                   value={newAccDesc}
                   onChange={(e) => setNewAccDesc(e.target.value)}
-                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
                 />
               </div>
 
             </div>
 
-            {/* Modal Actions */}
             <div className="bg-slate-50 px-6 py-3.5 border-t border-slate-200 flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowAddAccountModal(false)}
@@ -1132,7 +1431,7 @@ export default function AccountingPage() {
                 className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>حفظ وإضافة الحساب للدليل</span>
+                <span>حفظ الحساب في الدليل</span>
               </button>
             </div>
 
@@ -1141,7 +1440,7 @@ export default function AccountingPage() {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 1.5: EDIT ACCOUNT (تعديل اسم وبيانات الحساب)                         */}
+      {/* MODAL 2: EDIT ACCOUNT (تعديل بيانات الحساب)                                */}
       {/* ========================================================================= */}
       {showEditAccountModal && editingAccount && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
@@ -1153,8 +1452,8 @@ export default function AccountingPage() {
                   <Pencil className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-extrabold text-slate-900">تعديل بيانات الحساب المحاسبي</h3>
-                  <p className="text-[11px] text-slate-500 font-mono">كود الحساب: {editingAccount.code}</p>
+                  <h3 className="text-sm font-extrabold text-slate-900">تعديل بيانات الحساب: {editingAccount.code}</h3>
+                  <p className="text-[11px] text-slate-500">تعديل الاسم والملاحظات للحساب</p>
                 </div>
               </div>
               <button
@@ -1167,66 +1466,58 @@ export default function AccountingPage() {
 
             <div className="p-6 space-y-4">
               
-              {/* Account Code & Nature (Locked) */}
-              <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div>
-                  <span className="block text-[11px] font-bold text-slate-500 mb-0.5">كود الحساب (مقفل)</span>
-                  <span className="font-mono font-extrabold text-slate-800 text-sm">{editingAccount.code}</span>
-                </div>
-                <div>
-                  <span className="block text-[11px] font-bold text-slate-500 mb-0.5">الرصيد الدفتري الحالي</span>
-                  <span className="font-mono font-extrabold text-emerald-700 text-sm">
-                    {editingAccount.balance.toLocaleString("ar-EG")} ج.م
-                  </span>
-                </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">كود الحساب</label>
+                <input
+                  type="text"
+                  disabled
+                  value={editingAccount.code}
+                  className="w-full h-10 text-xs font-mono font-bold bg-slate-100 border border-slate-200 rounded-lg px-3 text-slate-500 cursor-not-allowed"
+                />
               </div>
 
-              {/* Arabic Name (Editable) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">اسم الحساب بالعربية *</label>
                 <input
                   type="text"
-                  value={editNameAr}
-                  onChange={(e) => setEditNameAr(e.target.value)}
-                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold text-slate-900"
+                  value={editAccNameAr}
+                  onChange={(e) => setEditAccNameAr(e.target.value)}
+                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold"
                 />
               </div>
 
-              {/* English Name (Editable) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">اسم الحساب بالإنجليزية</label>
                 <input
                   type="text"
-                  value={editNameEn}
-                  onChange={(e) => setEditNameEn(e.target.value)}
+                  value={editAccNameEn}
+                  onChange={(e) => setEditAccNameEn(e.target.value)}
                   className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                 />
               </div>
 
-              {/* Description (Editable) */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">الوصف أو الملاحظات</label>
-                <input
-                  type="text"
-                  value={editDesc}
-                  onChange={(e) => setEditDesc(e.target.value)}
-                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                <label className="block text-xs font-bold text-slate-700 mb-1">وصف الحساب والملاحظات</label>
+                <textarea
+                  rows={2}
+                  value={editAccDesc}
+                  onChange={(e) => setEditAccDesc(e.target.value)}
+                  className="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                 />
               </div>
 
             </div>
 
-            {/* Modal Actions */}
             <div className="bg-slate-50 px-6 py-3.5 border-t border-slate-200 flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowEditAccountModal(false)}
                 className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg"
               >
-                إلغاء التراجع
+                إلغاء
               </button>
               <button
                 onClick={handleSaveEditAccount}
-                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-xs cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg shadow-xs cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>حفظ التعديلات</span>
@@ -1238,7 +1529,7 @@ export default function AccountingPage() {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 2: ADD COST CENTER (إضافة مركز تكلفة جديد)                           */}
+      {/* MODAL 3: ADD COST CENTER (إضافة مركز تكلفة جديد)                           */}
       {/* ========================================================================= */}
       {showAddCostCenterModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
@@ -1250,8 +1541,8 @@ export default function AccountingPage() {
                   <Target className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-extrabold text-slate-900">إضافة مركز تكلفة جديد</h3>
-                  <p className="text-[11px] text-slate-500">تخصيص خط إنتاج أو قناة بيع لتحليل الأرباح والخسائر</p>
+                  <h3 className="text-sm font-extrabold text-slate-900">إضافة مركز تكلفة / خط إنتاج جديد</h3>
+                  <p className="text-[11px] text-slate-500">تتبع الربحية والمصروفات المستقلة لكل خط أو قناة</p>
                 </div>
               </div>
               <button
@@ -1279,36 +1570,35 @@ export default function AccountingPage() {
                   <label className="block text-xs font-bold text-slate-700 mb-1">نوع النشاط *</label>
                   <select
                     value={ccType}
-                    onChange={(e) => setCcType(e.target.value as any)}
-                    className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 font-medium"
+                    onChange={(e) => setCcType(e.target.value as CostCenter["type"])}
+                    className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 font-bold"
                   >
-                    <option value="PRODUCTION_LINE">خط إنتاج وتصنيع عطور</option>
+                    <option value="PRODUCTION_LINE">خط إنتاج وتصنيع</option>
                     <option value="SALES_CHANNEL">قناة مبيعات وتوزيع</option>
-                    <option value="ADMIN">إدارة عامة ومصنع</option>
-                    <option value="OTHER">أخرى</option>
+                    <option value="ADMINISTRATIVE">إداري وعمومي</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">اسم مركز التكلفة *</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">اسم مركز التكلفة بالعربية *</label>
                 <input
                   type="text"
-                  placeholder="مثال: خط إنتاج العطور الزيتية المركزة، معرض مدينة نصر..."
+                  placeholder="مثال: خط إنتاج معطرات الجو والفرش، فرع التجمع الخامس..."
                   value={ccNameAr}
                   onChange={(e) => setCcNameAr(e.target.value)}
-                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-purple-500 font-bold"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">وصف النشاط</label>
-                <input
-                  type="text"
-                  placeholder="ملاحظات حول طبيعة المصروفات والإيرادات المحملة..."
+                <label className="block text-xs font-bold text-slate-700 mb-1">الوصف والغرض من مركز التكلفة</label>
+                <textarea
+                  rows={2}
+                  placeholder="وصف طبيعة التكاليف والمبيعات الموجهة لهذا المركز..."
                   value={ccDesc}
                   onChange={(e) => setCcDesc(e.target.value)}
-                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full text-xs border border-slate-300 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
                 />
               </div>
 
@@ -1335,132 +1625,321 @@ export default function AccountingPage() {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 3: JOURNAL ENTRY WITH COST CENTERS (إضافة قيد بمراكز التكلفة)        */}
+      {/* MODAL 4: FUND TRANSFER (تحويل أموال بين الخزائن والبنوك)                   */}
       {/* ========================================================================= */}
-      {showNewEntryModal && (
+      {showTransferModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+          <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden">
             
-            {/* Modal Header */}
-            <div className="bg-slate-50/80 px-6 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-emerald-100/80 text-emerald-800 flex items-center justify-center shrink-0 border border-emerald-200">
-                  <Receipt className="w-5 h-5" />
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-800 flex items-center justify-center">
+                  <ArrowRightLeft className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-extrabold text-slate-900">إضافة قيد يومية محاسبي وتوزيع التكاليف</h3>
-                    <span className="font-mono text-xs font-bold bg-slate-200/80 text-slate-800 px-2 py-0.5 rounded">
-                      {nextEntryNumber}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    التحقق الآلي من شرط توازن القيد مع إمكانية ربط أطراف القيد بمراكز التكلفة
-                  </p>
+                  <h3 className="text-sm font-extrabold text-slate-900">تحويل أموال داخلي بين الخزائن والبنوك</h3>
+                  <p className="text-[11px] text-slate-500">إثبات حركة قيد مزدوج آلية بين حسابات النقدية والبنوك</p>
                 </div>
               </div>
-
               <button
-                onClick={() => setShowNewEntryModal(false)}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors"
-                title="إغلاق النافذة"
+                onClick={() => setShowTransferModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6 space-y-6 overflow-y-auto flex-1">
+            <div className="p-6 space-y-4">
               
-              {/* Header Info */}
-              <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 space-y-3">
-                <span className="text-xs font-bold text-slate-800 block">بيانات القيد الأساسية</span>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                      تاريخ القيد <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={entryDate}
-                      onChange={(e) => setEntryDate(e.target.value)}
-                      className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-medium"
-                    />
-                  </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">التحويل من (دائن - مخرج الأموال) *</label>
+                  <select
+                    value={transferFromAcc}
+                    onChange={(e) => setTransferFromAcc(e.target.value)}
+                    className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                  >
+                    {accounts
+                      .filter((a) => a.code.startsWith("1101") || a.code.startsWith("1102"))
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.code} - {a.nameAr}
+                        </option>
+                      ))}
+                  </select>
+                </div>
 
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                      البيان العام والشرح للقيد <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="مثال: شراء زيوت لافندر لخط العطور الفرنسية، إثبات إيرادات متجر Shopify..."
-                      value={entryDesc}
-                      onChange={(e) => setEntryDesc(e.target.value)}
-                      className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">التحويل إلى (مدين - مستلم الأموال) *</label>
+                  <select
+                    value={transferToAcc}
+                    onChange={(e) => setTransferToAcc(e.target.value)}
+                    className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                  >
+                    {accounts
+                      .filter((a) => a.code.startsWith("1101") || a.code.startsWith("1102"))
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.code} - {a.nameAr}
+                        </option>
+                      ))}
+                  </select>
                 </div>
               </div>
 
-              {/* Line Items Table with Cost Center Column */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-900">أطراف وحسابات القيد ومراكز التكلفة</span>
-                    <span className="text-[11px] text-slate-400 font-medium">({entryLines.length} أطراف)</span>
-                  </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">المبلغ المحول (جنيه مصري) *</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={transferAmount}
+                  onChange={(e) => setTransferAmount(parseFloat(e.target.value) || 0)}
+                  className="w-full h-10 text-sm font-mono font-black border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-blue-700"
+                />
+              </div>
 
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">البيان التوضيحي للتحويل</label>
+                <input
+                  type="text"
+                  value={transferDesc}
+                  onChange={(e) => setTransferDesc(e.target.value)}
+                  className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                />
+              </div>
+
+            </div>
+
+            <div className="bg-slate-50 px-6 py-3.5 border-t border-slate-200 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowTransferModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg"
+              >
+                إلغاء
+              </button>
+              <button
+                onClick={handleExecuteTransfer}
+                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg shadow-xs cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>ترحيل قيد التحويل المالي</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 5: ACCOUNT STATEMENT (كشف حساب تحليلي)                              */}
+      {/* ========================================================================= */}
+      {selectedAccountForStatement && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl border border-slate-200 overflow-hidden">
+            
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900">
+                    كشف حساب تحليلي: {selectedAccountForStatement.code} - {selectedAccountForStatement.nameAr}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">سجل القيود الدفترية والأرصدة لهذا الحساب</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedAccountForStatement(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              
+              <div className="grid grid-cols-3 gap-3 bg-slate-50 p-3 rounded-lg text-xs">
+                <div>
+                  <span className="text-[10px] text-slate-500 block">طبيعة الحساب:</span>
+                  <strong className="font-bold text-slate-900">
+                    {selectedAccountForStatement.nature === "DEBIT" ? "مدين (+)" : "دائن (-)"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 block">التبويب:</span>
+                  <strong className="font-bold text-slate-900">{accountTypeNames[selectedAccountForStatement.type]}</strong>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 block">الرصيد الدفتري الحالي:</span>
+                  <strong className="font-mono text-sm font-black text-emerald-700">
+                    {selectedAccountForStatement.balance.toLocaleString("ar-EG")} ج.م
+                  </strong>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="block text-xs font-extrabold text-slate-800">الحركات والقيود المسجلة:</span>
+                <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-60 overflow-y-auto">
+                  <table className="w-full text-xs text-right">
+                    <thead className="bg-slate-100 text-slate-600 font-bold sticky top-0">
+                      <tr>
+                        <th className="py-2 px-3">رقم القيد</th>
+                        <th className="py-2 px-3">التاريخ</th>
+                        <th className="py-2 px-3">البيان</th>
+                        <th className="py-2 px-3 text-left">مدين</th>
+                        <th className="py-2 px-3 text-left">دائن</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {entries.flatMap((entry) => 
+                        entry.lines
+                          .filter((l) => l.accountId === selectedAccountForStatement.id || l.accountCode === selectedAccountForStatement.code)
+                          .map((l, i) => (
+                            <tr key={`${entry.id}-${i}`} className="hover:bg-slate-50">
+                              <td className="py-2 px-3 font-mono font-bold text-slate-700">{entry.entryNumber}</td>
+                              <td className="py-2 px-3 font-mono text-slate-500">{entry.date}</td>
+                              <td className="py-2 px-3 text-slate-800">{l.description || entry.description}</td>
+                              <td className="py-2 px-3 text-left font-mono font-bold text-blue-700">
+                                {l.debit > 0 ? `${l.debit.toLocaleString("ar-EG")} ج.م` : "-"}
+                              </td>
+                              <td className="py-2 px-3 text-left font-mono font-bold text-amber-700">
+                                {l.credit > 0 ? `${l.credit.toLocaleString("ar-EG")} ج.م` : "-"}
+                              </td>
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+
+            <div className="bg-slate-50 px-6 py-3 border-t border-slate-200 flex justify-end">
+              <button
+                onClick={() => setSelectedAccountForStatement(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg"
+              >
+                إغلاق
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 6: ADD JOURNAL ENTRY WITH COST CENTERS (إضافة قيد يومية)             */}
+      {/* ========================================================================= */}
+      {showNewEntryModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl w-full max-w-4xl shadow-2xl border border-slate-200 overflow-hidden my-auto">
+            
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center">
+                  <BookOpen className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900">
+                    إنشاء قيد يومية محاسبي مزدوج (Journal Entry)
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    مع إلزامية التوازن المدين = الدائن وتخصيص مراكز التكلفة لخطوط الإنتاج والقنوات
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowNewEntryModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+              
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">رقم القيد المتسلسل</label>
+                  <input
+                    type="text"
+                    disabled
+                    value={nextEntryNumber}
+                    className="w-full h-10 text-xs font-mono font-bold bg-slate-100 border border-slate-200 rounded-lg px-3 text-slate-500 cursor-not-allowed"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">تاريخ القيد *</label>
+                  <input
+                    type="date"
+                    value={entryDate}
+                    onChange={(e) => setEntryDate(e.target.value)}
+                    className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">البيان العام للقيد *</label>
+                  <input
+                    type="text"
+                    placeholder="مثال: إثبات مصاريف كهرباء المصنع، سداد دفعة مورد..."
+                    value={entryDesc}
+                    onChange={(e) => setEntryDesc(e.target.value)}
+                    className="w-full h-10 text-xs border border-slate-300 rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Lines table */}
+              <div className="space-y-2 pt-2 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-slate-800">أطراف القيد (الحسابات والمبالغ ومراكز التكلفة):</span>
                   <button
                     onClick={addEntryLine}
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1 px-3 py-1 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>إضافة طرف آخر للقيد</span>
+                    <span>إضافة طرف قيد آخر</span>
                   </button>
                 </div>
 
-                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-                  
-                  {/* Grid Table Header (Now with Cost Center) */}
-                  <div className="grid grid-cols-12 gap-2 bg-slate-100/90 px-4 py-2.5 text-slate-700 font-bold text-xs border-b border-slate-200">
-                    <div className="col-span-12 sm:col-span-4">الحساب الفرعي (شجرة الحسابات)</div>
-                    <div className="col-span-12 sm:col-span-3">مركز التكلفة (اختياري)</div>
-                    <div className="col-span-12 sm:col-span-2">البيان التوضيحي</div>
-                    <div className="col-span-6 sm:col-span-1 text-left">مدين (+)</div>
-                    <div className="col-span-5 sm:col-span-1 text-left">دائن (-)</div>
-                    <div className="col-span-1 text-center">حذف</div>
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="bg-slate-100 px-3 py-2 text-[11px] font-bold text-slate-700 grid grid-cols-12 gap-2">
+                    <span className="col-span-4">الحساب التحليلي</span>
+                    <span className="col-span-3">مركز التكلفة (اختياري)</span>
+                    <span className="col-span-2 text-left">مدين (ج.م)</span>
+                    <span className="col-span-2 text-left">دائن (ج.م)</span>
+                    <span className="col-span-1 text-center">حذف</span>
                   </div>
 
-                  {/* Rows List */}
-                  <div className="divide-y divide-slate-100 bg-white">
+                  <div className="divide-y divide-slate-100 p-2 space-y-2">
                     {entryLines.map((line, idx) => (
-                      <div 
-                        key={idx} 
-                        className="grid grid-cols-12 gap-2 items-center px-4 py-2.5 hover:bg-slate-50/70 transition-colors"
-                      >
-                        {/* 1. Account Picker (4 Cols) */}
-                        <div className="col-span-12 sm:col-span-4">
+                      <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                        {/* 1. Account Selector */}
+                        <div className="col-span-4">
                           <select
                             value={line.accountId}
                             onChange={(e) => handleLineChange(idx, "accountId", e.target.value)}
-                            className="w-full h-9 text-xs border border-slate-300 rounded-lg px-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-medium"
+                            className="w-full h-9 text-xs border border-slate-300 rounded-lg px-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
                           >
-                            <option value="">-- اختر الحساب الفرعي --</option>
-                            {leafAccounts.map((acc) => (
-                              <option key={acc.id} value={acc.id}>
-                                {acc.code} - {acc.nameAr}
+                            <option value="">-- اختر الحساب --</option>
+                            {leafAccounts.map((a) => (
+                              <option key={a.id} value={a.id}>
+                                {a.code} - {a.nameAr}
                               </option>
                             ))}
                           </select>
                         </div>
 
-                        {/* 2. Cost Center Picker (3 Cols) */}
-                        <div className="col-span-12 sm:col-span-3">
+                        {/* 2. Cost Center */}
+                        <div className="col-span-3">
                           <select
                             value={line.costCenterId || ""}
                             onChange={(e) => handleLineChange(idx, "costCenterId", e.target.value)}
-                            className="w-full h-9 text-xs border border-slate-300 rounded-lg px-2 bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 text-slate-700"
+                            className="w-full h-9 text-xs border border-slate-300 rounded-lg px-2 bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 font-medium"
                           >
                             <option value="">-- بدون مركز تكلفة --</option>
                             {costCenters.map((cc) => (
@@ -1471,66 +1950,54 @@ export default function AccountingPage() {
                           </select>
                         </div>
 
-                        {/* 3. Description (2 Cols) */}
-                        <div className="col-span-12 sm:col-span-2">
-                          <input
-                            type="text"
-                            placeholder="بيان خاص بالسطر..."
-                            value={line.description}
-                            onChange={(e) => handleLineChange(idx, "description", e.target.value)}
-                            className="w-full h-9 text-xs border border-slate-300 rounded-lg px-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                          />
-                        </div>
-
-                        {/* 4. Debit (1 Col) */}
-                        <div className="col-span-6 sm:col-span-1">
+                        {/* 3. Debit Input */}
+                        <div className="col-span-2">
                           <input
                             type="number"
+                            min="0"
                             placeholder="0.00"
                             value={line.debit || ""}
                             onChange={(e) => handleLineChange(idx, "debit", e.target.value)}
-                            className="w-full h-9 text-xs font-mono font-bold text-left text-blue-700 border border-slate-300 rounded-lg px-2 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                            className="w-full h-9 text-xs font-mono font-bold text-left text-blue-700 border border-slate-300 rounded-lg px-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                         </div>
 
-                        {/* 5. Credit (1 Col) */}
-                        <div className="col-span-5 sm:col-span-1">
+                        {/* 4. Credit Input */}
+                        <div className="col-span-2">
                           <input
                             type="number"
+                            min="0"
                             placeholder="0.00"
                             value={line.credit || ""}
                             onChange={(e) => handleLineChange(idx, "credit", e.target.value)}
-                            className="w-full h-9 text-xs font-mono font-bold text-left text-amber-700 border border-slate-300 rounded-lg px-2 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                            className="w-full h-9 text-xs font-mono font-bold text-left text-amber-700 border border-slate-300 rounded-lg px-2 focus:outline-none focus:ring-2 focus:ring-amber-500"
                           />
                         </div>
 
-                        {/* 6. Delete Action (1 Col) */}
+                        {/* 5. Delete Action */}
                         <div className="col-span-1 flex justify-center">
                           {entryLines.length > 2 ? (
                             <button
                               onClick={() => removeEntryLine(idx)}
                               className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                              title="حذف هذا السطر"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
                           ) : (
-                            <span className="w-8 h-8 flex items-center justify-center text-slate-200 text-xs">-</span>
+                            <span className="text-slate-300 text-xs">-</span>
                           )}
                         </div>
                       </div>
                     ))}
                   </div>
 
-                  {/* Table Bottom Totals Strip */}
+                  {/* Summary Footer */}
                   <div className="grid grid-cols-12 gap-2 items-center bg-slate-50 px-4 py-2.5 border-t border-slate-200 text-xs font-bold text-slate-700">
-                    <div className="col-span-12 sm:col-span-9">
-                      إجمالي الأطراف المسجلة في القيد:
-                    </div>
-                    <div className="col-span-6 sm:col-span-1 text-left font-mono text-blue-700 font-extrabold text-xs">
+                    <div className="col-span-7">إجمالي طرفي القيد:</div>
+                    <div className="col-span-2 text-left font-mono text-blue-700 font-black">
                       {validation.totalDebit.toLocaleString("ar-EG")} ج.م
                     </div>
-                    <div className="col-span-6 sm:col-span-2 text-left font-mono text-amber-700 font-extrabold text-xs">
+                    <div className="col-span-2 text-left font-mono text-amber-700 font-black">
                       {validation.totalCredit.toLocaleString("ar-EG")} ج.م
                     </div>
                   </div>
@@ -1538,79 +2005,57 @@ export default function AccountingPage() {
                 </div>
               </div>
 
-              {/* Balance Feedback Card */}
-              <div className={`p-4 rounded-xl border transition-all ${
+              {/* Live Balance Difference Indicator */}
+              <div className={`p-4 rounded-xl border ${
                 validation.isValid 
-                  ? "bg-emerald-50/80 border-emerald-200 text-emerald-950" 
-                  : "bg-amber-50/80 border-amber-200 text-amber-950"
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-950" 
+                  : "bg-amber-50 border-amber-200 text-amber-950"
               }`}>
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                      validation.isValid ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"
-                    }`}>
-                      {validation.isValid ? (
-                        <CheckCircle2 className="w-5 h-5" />
-                      ) : (
-                        <AlertCircle className="w-5 h-5" />
-                      )}
-                    </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {validation.isValid ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                    ) : (
+                      <AlertCircle className="w-5 h-5 text-amber-600" />
+                    )}
                     <div>
                       <span className="text-xs font-bold block">
-                        {validation.isValid 
-                          ? "القيد متوازن محاسبياً وجاهز للترحيل الفوري بالدفاتر" 
-                          : "القيد غير متوازن: شرط التساوي غير متحقق"}
+                        {validation.isValid ? "القيد متوازن محاسبياً وجاهز للترحيل" : "القيد غير متوازن: شرط التساوي غير متحقق"}
                       </span>
-                      <span className="text-[11px] text-slate-500 block mt-0.5">
-                        {validation.isValid 
-                          ? "إجمالي المدين يطابق تماماً إجمالي الدائن بنسبة 100%" 
-                          : "المحاسبة لا تقبل ترحيل قيد به فارق حتى لو كان قرشاً واحداً"}
+                      <span className="text-[10px] text-slate-500 block">
+                        {validation.isValid ? "إجمالي المدين يطابق الدائن تماماً بنسبة 100%" : "يجب أن يتطابق مجموع المدين مع مجموع الدائن"}
                       </span>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 font-mono text-xs font-bold">
-                    <span className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-slate-700">
-                      الفارق: <strong className={validation.difference === 0 ? "text-emerald-700" : "text-red-600"}>
-                        {Math.abs(validation.difference).toLocaleString("ar-EG")} ج.م
-                      </strong>
-                    </span>
-                  </div>
+                  <span className="font-mono text-xs font-bold bg-white px-3 py-1.5 rounded border border-slate-200">
+                    الفارق: <strong className={validation.difference === 0 ? "text-emerald-700" : "text-red-600"}>
+                      {Math.abs(validation.difference).toLocaleString("ar-EG")} ج.م
+                    </strong>
+                  </span>
                 </div>
-
-                {!validation.isValid && validation.errors.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-amber-200/60 space-y-1">
-                    {validation.errors.map((err, i) => (
-                      <p key={i} className="text-xs text-red-600 font-medium flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-600 shrink-0"></span>
-                        <span>{err}</span>
-                      </p>
-                    ))}
-                  </div>
-                )}
               </div>
 
             </div>
 
-            {/* Modal Actions Footer */}
-            <div className="bg-slate-50 px-6 py-3.5 border-t border-slate-200 flex items-center justify-end gap-3 shrink-0">
+            <div className="bg-slate-50 px-6 py-3.5 border-t border-slate-200 flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowNewEntryModal(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200/80 rounded-lg transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg"
               >
-                إلغاء التراجع
+                إلغاء
               </button>
               <button
                 disabled={!validation.isValid}
                 onClick={handlePostEntry}
-                className={`inline-flex items-center gap-2 px-6 py-2 text-xs font-bold text-white rounded-lg transition-all shadow-xs ${
+                className={`inline-flex items-center gap-2 px-6 py-2 text-xs font-bold text-white rounded-lg shadow-xs transition-colors ${
                   validation.isValid 
-                    ? "bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-emerald-700/20" 
+                    ? "bg-emerald-600 hover:bg-emerald-700 cursor-pointer" 
                     : "bg-slate-300 cursor-not-allowed opacity-60"
                 }`}
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>ترحيل القيد بالدفاتر</span>
+                <span>ترحيل القيد بالدفاتر ومراكز التكلفة</span>
               </button>
             </div>
 
@@ -1619,5 +2064,13 @@ export default function AccountingPage() {
       )}
 
     </div>
+  );
+}
+
+export default function AccountingPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-xs text-slate-500 font-bold">جاري تحميل شجرة الحسابات...</div>}>
+      <AccountingPageContent />
+    </Suspense>
   );
 }

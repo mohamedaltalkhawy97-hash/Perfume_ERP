@@ -13,6 +13,7 @@ export interface Account {
   isLeaf: boolean;
   description: string;
   balance: number;
+  isActive?: boolean;
 }
 
 export type JournalEntryStatus = 'DRAFT' | 'POSTED' | 'REVERSED';
@@ -34,7 +35,17 @@ export interface JournalEntry {
   entryNumber: string;
   date: string;
   description: string;
-  referenceType: 'MANUAL' | 'OPENING' | 'PURCHASE' | 'PRODUCTION' | 'SHOPIFY_SALE' | 'SETTLEMENT';
+  referenceType: 
+    | 'MANUAL' 
+    | 'OPENING' 
+    | 'PURCHASE' 
+    | 'PRODUCTION' 
+    | 'MANUFACTURING'
+    | 'SHOPIFY_SALE' 
+    | 'SALES_INVOICE'
+    | 'COGS'
+    | 'SETTLEMENT' 
+    | 'BANK_TRANSFER';
   referenceId?: string;
   status: JournalEntryStatus;
   lines: JournalEntryLine[];
@@ -42,6 +53,8 @@ export interface JournalEntry {
   totalCredit: number;
   createdAt: string;
   createdBy: string;
+  costCenterId?: string;
+  costCenterNameAr?: string;
   isReversal?: boolean;
   reversalOfId?: string;
   reversalReason?: string;

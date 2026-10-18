@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { 
   Boxes, 
@@ -47,12 +48,33 @@ import {
   generatePurchaseReceiptJournalEntry 
 } from "@/lib/inventory-engine";
 
-export default function InventoryPage() {
-  const [activeTab, setActiveTab] = useState<"items" | "warehouses" | "batches" | "movements">("items");
+function InventoryPageContent() {
+  const searchParams = useSearchParams();
+  type TabType = "items" | "warehouses" | "batches" | "movements";
+  const [activeTab, setActiveTab] = useState<TabType>("items");
   const [items, setItems] = useState<Item[]>(INITIAL_ITEMS);
   const [warehouses] = useState<Warehouse[]>(INITIAL_WAREHOUSES);
   const [batches, setBatches] = useState<ItemBatch[]>(INITIAL_BATCHES);
   const [transactions, setTransactions] = useState<StockTransaction[]>(INITIAL_STOCK_TRANSACTIONS);
+
+  // Sync with URL query parameters
+  useEffect(() => {
+    const tabParam = searchParams.get("tab") as TabType;
+    if (tabParam && ["items", "warehouses", "batches", "movements"].includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+    const actionParam = searchParams.get("action");
+    if (actionParam === "new_grn") {
+      setShowGrnModal(true);
+    } else if (actionParam === "new_item") {
+      openNewItemModal();
+    }
+  }, [searchParams]);
+
+  const handleSwitchTab = (tab: TabType) => {
+    setActiveTab(tab);
+    window.history.replaceState(null, "", `/inventory?tab=${tab}`);
+  };
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -390,8 +412,8 @@ export default function InventoryPage() {
       <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs overflow-hidden">
         <div className="flex border-b border-slate-200 bg-slate-50/60 px-3 pt-2.5 gap-1.5 overflow-x-auto">
           <button
-            onClick={() => setActiveTab("items")}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 ${
+            onClick={() => handleSwitchTab("items")}
+            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 cursor-pointer ${
               activeTab === "items"
                 ? "bg-white text-emerald-800 border-emerald-600 shadow-xs font-extrabold"
                 : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100/70"
@@ -402,8 +424,8 @@ export default function InventoryPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab("warehouses")}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 ${
+            onClick={() => handleSwitchTab("warehouses")}
+            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 cursor-pointer ${
               activeTab === "warehouses"
                 ? "bg-white text-blue-800 border-blue-600 shadow-xs font-extrabold"
                 : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100/70"
@@ -414,8 +436,8 @@ export default function InventoryPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab("batches")}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 ${
+            onClick={() => handleSwitchTab("batches")}
+            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 cursor-pointer ${
               activeTab === "batches"
                 ? "bg-white text-purple-800 border-purple-600 shadow-xs font-extrabold"
                 : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100/70"
@@ -426,8 +448,8 @@ export default function InventoryPage() {
           </button>
 
           <button
-            onClick={() => setActiveTab("movements")}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 ${
+            onClick={() => handleSwitchTab("movements")}
+            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 border-t-2 shrink-0 cursor-pointer ${
               activeTab === "movements"
                 ? "bg-white text-amber-800 border-amber-600 shadow-xs font-extrabold"
                 : "border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100/70"
@@ -1150,5 +1172,13 @@ export default function InventoryPage() {
       )}
 
     </div>
+  );
+}
+
+export default function InventoryPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-xs text-slate-500 font-bold">جاري تحميل بيانات المخازن...</div>}>
+      <InventoryPageContent />
+    </Suspense>
   );
 }

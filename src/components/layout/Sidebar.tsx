@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { 
   Building2, 
   LayoutDashboard, 
@@ -19,13 +19,54 @@ import {
   ShieldCheck,
   Package,
   Layers,
-  History
+  History,
+  Target,
+  Warehouse,
+  Droplets,
+  Store,
+  Scale
 } from "lucide-react";
 
 export function Sidebar() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentTab = searchParams.get("tab") || "";
 
-  const navSections = [
+  const isLinkActive = (href: string) => {
+    const [itemPath, itemQuery] = href.split("?");
+    if (pathname !== itemPath) return false;
+    if (!itemQuery) {
+      return !currentTab;
+    }
+    const itemParams = new URLSearchParams(itemQuery);
+    const itemTab = itemParams.get("tab");
+    if (!currentTab) {
+      // Default tabs when no ?tab query is present
+      if (itemPath === "/accounting" && itemTab === "chart") return true;
+      if (itemPath === "/inventory" && itemTab === "items") return true;
+      if (itemPath === "/manufacturing" && itemTab === "orders") return true;
+      if (itemPath === "/sales" && itemTab === "invoices") return true;
+      if (itemPath === "/reports" && itemTab === "income") return true;
+      return false;
+    }
+    return currentTab === itemTab;
+  };
+
+  interface NavItem {
+    title: string;
+    href: string;
+    icon: any;
+    iconColor: string;
+    badge?: string;
+    badgeColor?: string;
+  }
+
+  interface NavSection {
+    label: string;
+    items: NavItem[];
+  }
+
+  const navSections: NavSection[] = [
     {
       label: "الرئيسية",
       items: [
@@ -42,14 +83,18 @@ export function Sidebar() {
       items: [
         {
           title: "دليل وشجرة الحسابات",
-          href: "/accounting",
+          href: "/accounting?tab=chart",
           icon: Layers,
           iconColor: "text-blue-600 bg-blue-50",
-          badge: "مفعلة",
-          badgeColor: "bg-emerald-50 text-emerald-700 border border-emerald-200",
         },
         {
-          title: "القيود اليومية",
+          title: "مراكز التكلفة وخطوط الإنتاج",
+          href: "/accounting?tab=cost_centers",
+          icon: Target,
+          iconColor: "text-purple-600 bg-purple-50",
+        },
+        {
+          title: "القيود اليومية المحاسبية",
           href: "/accounting?tab=entries",
           icon: Receipt,
           iconColor: "text-indigo-600 bg-indigo-50",
@@ -60,26 +105,52 @@ export function Sidebar() {
           icon: CreditCard,
           iconColor: "text-teal-600 bg-teal-50",
         },
+        {
+          title: "ميزان المراجعة والأستاذ",
+          href: "/accounting?tab=trial",
+          icon: Scale,
+          iconColor: "text-amber-600 bg-amber-50",
+        },
       ],
     },
     {
       label: "المخازن والتصنيع",
       items: [
         {
-          title: "المنتجات والخامات",
-          href: "/inventory",
+          title: "المنتجات والمواد الخام",
+          href: "/inventory?tab=items",
           icon: Boxes,
           iconColor: "text-amber-600 bg-amber-50",
-          badge: "مفعلة",
-          badgeColor: "bg-emerald-50 text-emerald-700 border border-emerald-200",
         },
         {
-          title: "أوامر التشغيل والتصنيع",
-          href: "/manufacturing",
+          title: "المستودعات وأرصدة التخزين",
+          href: "/inventory?tab=warehouses",
+          icon: Warehouse,
+          iconColor: "text-cyan-600 bg-cyan-50",
+        },
+        {
+          title: "تشغيلات التعتيق واللوتات",
+          href: "/inventory?tab=batches",
+          icon: Droplets,
+          iconColor: "text-blue-600 bg-blue-50",
+        },
+        {
+          title: "أوامر التشغيل والخلط",
+          href: "/manufacturing?tab=orders",
           icon: FlaskConical,
           iconColor: "text-purple-600 bg-purple-50",
-          badge: "المرحلة 3",
-          badgeColor: "bg-slate-100 text-slate-600",
+        },
+        {
+          title: "تركيبات العطور (BOM)",
+          href: "/manufacturing?tab=boms",
+          icon: FileSpreadsheet,
+          iconColor: "text-rose-600 bg-rose-50",
+        },
+        {
+          title: "صهاريج التعتيق والأمان",
+          href: "/manufacturing?tab=tanks",
+          icon: ShieldCheck,
+          iconColor: "text-emerald-600 bg-emerald-50",
         },
       ],
     },
@@ -87,18 +158,28 @@ export function Sidebar() {
       label: "المبيعات والعملاء",
       items: [
         {
-          title: "فواتير المبيعات",
-          href: "/sales",
+          title: "فواتير المبيعات الإلكترونية",
+          href: "/sales?tab=invoices",
           icon: ShoppingCart,
           iconColor: "text-rose-600 bg-rose-50",
         },
         {
-          title: "ربط متجر Shopify",
+          title: "نقطة البيع السريعة (POS)",
+          href: "/sales?tab=pos",
+          icon: Store,
+          iconColor: "text-emerald-600 bg-emerald-50",
+        },
+        {
+          title: "ربط متجر Shopify والوسطاء",
           href: "/sales?tab=shopify",
           icon: Package,
-          iconColor: "text-emerald-600 bg-emerald-50",
-          badge: "المرحلة 4",
-          badgeColor: "bg-slate-100 text-slate-600",
+          iconColor: "text-blue-600 bg-blue-50",
+        },
+        {
+          title: "دليل العملاء والموزعين",
+          href: "/sales?tab=customers",
+          icon: Users,
+          iconColor: "text-indigo-600 bg-indigo-50",
         },
       ],
     },
@@ -107,7 +188,7 @@ export function Sidebar() {
       items: [
         {
           title: "التقارير المالية والختامية",
-          href: "/reports",
+          href: "/reports?tab=income",
           icon: FileSpreadsheet,
           iconColor: "text-cyan-600 bg-cyan-50",
         },
@@ -169,7 +250,7 @@ export function Sidebar() {
 
             {section.items.map((item) => {
               const Icon = item.icon;
-              const isActive = pathname === item.href.split("?")[0];
+              const isActive = isLinkActive(item.href);
 
               return (
                 <Link

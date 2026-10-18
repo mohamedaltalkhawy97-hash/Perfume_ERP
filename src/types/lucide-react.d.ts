@@ -2,8 +2,11 @@ declare module "lucide-react" {
   import * as React from "react";
   export type Icon = React.FC<React.SVGProps<SVGSVGElement> & { size?: number | string; color?: string; className?: string }>;
   
+  export const LayoutDashboard: Icon;
   export const ChevronDown: Icon;
   export const ChevronRight: Icon;
+  export const ChevronLeft: Icon;
+  export const ChevronUp: Icon;
   export const Plus: Icon;
   export const PlusCircle: Icon;
   export const Trash2: Icon;
@@ -11,6 +14,8 @@ declare module "lucide-react" {
   export const X: Icon;
   export const AlertCircle: Icon;
   export const ArrowRightLeft: Icon;
+  export const ArrowRight: Icon;
+  export const ArrowLeft: Icon;
   export const FileText: Icon;
   export const Layers: Icon;
   export const PieChart: Icon;
@@ -60,4 +65,28 @@ declare module "lucide-react" {
   export const Globe: Icon;
   export const Printer: Icon;
   export const Send: Icon;
+  export const BookOpen: Icon;
+  export const Target: Icon;
+  export const Receipt: Icon;
+  export const RotateCcw: Icon;
+  export const Folder: Icon;
+  export const FolderOpen: Icon;
+  export const FolderPlus: Icon;
+  export const GitFork: Icon;
+  export const User: Icon;
+  export const Tag: Icon;
+  export const Save: Icon;
+  export const Edit: Icon;
+  export const Edit2: Icon;
+  export const Edit3: Icon;
+  export const FileCheck: Icon;
+  export const Sliders: Icon;
+  export const SlidersHorizontal: Icon;
+  export const Database: Icon;
+  export const Activity: Icon;
+  export const Award: Icon;
+  export const Briefcase: Icon;
+  export const CheckSquare: Icon;
+  export const Square: Icon;
+  export const Circle: Icon;
 }

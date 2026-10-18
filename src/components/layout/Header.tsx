@@ -23,15 +23,21 @@ export function Header() {
   const getPageTitle = () => {
     switch (pathname) {
       case "/":
-        return "لوحة المعلومات الرئيسية";
+        return "لوحة المعلومات والتحليلات الرئيسية";
       case "/accounting":
-        return "الحسابات العامة (شجرة الحسابات والقيود)";
+        return "الحسابات العامة وشجرة الحسابات ومراكز التكلفة";
       case "/inventory":
-        return "المخازن والمستودعات";
+        return "إدارة المخازن والمستودعات وتتبع الدفعات";
       case "/manufacturing":
-        return "التصنيع وأوامر التشغيل";
+        return "التصنيع وأوامر التشغيل وتكلفة الوجبات";
       case "/sales":
-        return "المبيعات وShopify";
+        return "المبيعات ونقاط البيع ومتجر Shopify";
+      case "/reports":
+        return "التقارير المالية والختامية وضريبة القيمة المضافة";
+      case "/audit":
+        return "سجل التدقيق والأمان والمعاملات الرقابية";
+      case "/settings":
+        return "إعدادات المصنع والضرائب والمستخدمين";
       default:
         return "نظام دفترة لإدارة مصنع العطور";
     }
@@ -79,29 +85,45 @@ export function Header() {
 
           {/* Quick Add Dropdown */}
           {showQuickAdd && (
-            <div className="absolute left-0 mt-2 w-52 bg-white rounded-lg shadow-xl border border-slate-200 py-1.5 z-50 text-xs">
+            <div className="absolute left-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-slate-200 py-1.5 z-50 text-xs">
               <Link
-                href="/accounting"
+                href="/accounting?tab=entries&action=new_entry"
                 onClick={() => setShowQuickAdd(false)}
                 className="flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 hover:text-emerald-700 font-semibold"
               >
                 <Receipt className="w-4 h-4 text-emerald-600" />
-                <span>قيد يومية جديد</span>
+                <span>قيد يومية محاسبي جديد</span>
               </Link>
               <Link
-                href="/inventory"
+                href="/accounting?tab=cost_centers&action=new_cost_center"
+                onClick={() => setShowQuickAdd(false)}
+                className="flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 hover:text-purple-700 font-semibold"
+              >
+                <Layers className="w-4 h-4 text-purple-600" />
+                <span>إضافة مركز تكلفة جديد</span>
+              </Link>
+              <Link
+                href="/inventory?tab=items&action=new_grn"
                 onClick={() => setShowQuickAdd(false)}
                 className="flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 hover:text-blue-700 font-semibold"
               >
                 <Boxes className="w-4 h-4 text-blue-600" />
-                <span>إذن إضافة مخزن (خامات)</span>
+                <span>إذن إضافة مخزن (توريد خامات)</span>
               </Link>
               <Link
-                href="/sales"
+                href="/manufacturing?tab=orders&action=new_order"
                 onClick={() => setShowQuickAdd(false)}
-                className="flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 hover:text-purple-700 font-semibold"
+                className="flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 hover:text-amber-700 font-semibold"
               >
-                <ShoppingCart className="w-4 h-4 text-purple-600" />
+                <Plus className="w-4 h-4 text-amber-600" />
+                <span>أمر تشغيل وخلط عطور جديد</span>
+              </Link>
+              <Link
+                href="/sales?tab=invoices&action=new_invoice"
+                onClick={() => setShowQuickAdd(false)}
+                className="flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 hover:text-rose-700 font-semibold"
+              >
+                <ShoppingCart className="w-4 h-4 text-rose-600" />
                 <span>فاتورة مبيعات جديدة</span>
               </Link>
             </div>

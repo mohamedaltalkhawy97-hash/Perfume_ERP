@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Cairo } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -23,8 +24,10 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl" className={cairo.variable}>
       <body className="antialiased min-h-screen bg-slate-100/70 font-sans text-slate-900 flex">
-        {/* Right Sidebar (Qoyod Style) */}
-        <Sidebar />
+        {/* Right Sidebar (Daftra Style) */}
+        <Suspense fallback={<aside className="w-64 bg-white shrink-0 min-h-screen border-l border-slate-200" />}>
+          <Sidebar />
+        </Suspense>
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col min-w-0 min-h-screen overflow-x-hidden">
