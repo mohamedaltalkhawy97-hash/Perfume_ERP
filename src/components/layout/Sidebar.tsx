@@ -14,7 +14,6 @@ import {
   CreditCard,
   Truck,
   Users,
-  ChevronDown,
   Sparkles,
   ShieldCheck,
   Package,
@@ -41,7 +40,6 @@ export function Sidebar() {
     const itemParams = new URLSearchParams(itemQuery);
     const itemTab = itemParams.get("tab");
     if (!currentTab) {
-      // Default tabs when no ?tab query is present
       if (itemPath === "/accounting" && itemTab === "chart") return true;
       if (itemPath === "/inventory" && itemTab === "items") return true;
       if (itemPath === "/manufacturing" && itemTab === "orders") return true;
@@ -89,7 +87,7 @@ export function Sidebar() {
         },
         {
           title: "دليل الموردين والمشتريات (211)",
-          href: "/accounting?tab=suppliers",
+          href: "/suppliers",
           icon: Truck,
           iconColor: "text-orange-600 bg-orange-50",
         },
@@ -217,7 +215,7 @@ export function Sidebar() {
   return (
     <aside className="w-64 bg-white text-slate-800 flex flex-col shrink-0 min-h-screen border-l border-slate-200 shadow-sm select-none">
       
-      {/* Brand Header (Daftra Style) */}
+      {/* Brand Header */}
       <div className="h-16 px-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
         <Link href="/" className="flex items-center gap-2.5">
           <div className="w-9 h-9 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold shadow-sm">
