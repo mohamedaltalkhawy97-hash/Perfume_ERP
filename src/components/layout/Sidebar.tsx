@@ -88,6 +88,12 @@ export function Sidebar() {
           iconColor: "text-blue-600 bg-blue-50",
         },
         {
+          title: "دليل الموردين والمشتريات (211)",
+          href: "/accounting?tab=suppliers",
+          icon: Truck,
+          iconColor: "text-orange-600 bg-orange-50",
+        },
+        {
           title: "مراكز التكلفة وخطوط الإنتاج",
           href: "/accounting?tab=cost_centers",
           icon: Target,
