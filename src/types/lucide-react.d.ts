@@ -89,4 +89,26 @@ declare module "lucide-react" {
   export const CheckSquare: Icon;
   export const Square: Icon;
   export const Circle: Icon;
+  export const Phone: Icon;
+  export const Mail: Icon;
+  export const MapPin: Icon;
+  export const Hash: Icon;
+  export const Info: Icon;
+  export const Copy: Icon;
+  export const ExternalLink: Icon;
+  export const MoreVertical: Icon;
+  export const MoreHorizontal: Icon;
+  export const ArrowDown: Icon;
+  export const ArrowUp: Icon;
+  export const RefreshCcw: Icon;
+  export const TrendingDown: Icon;
+  export const Zap: Icon;
+  export const Star: Icon;
+  export const Flag: Icon;
+  export const Layers3: Icon;
+  export const PanelLeft: Icon;
+  export const LogOut: Icon;
+  export const UserCircle: Icon;
+  export const Factory: Icon;
+  export const Layers2: Icon;
 }

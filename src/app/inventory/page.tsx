@@ -34,7 +34,7 @@ import {
   INITIAL_ITEMS,
   INITIAL_BATCHES,
   INITIAL_STOCK_TRANSACTIONS
-} from '@/lib/initial-data';
+} from '@/lib/default-inventory';
 
 function InventoryContent() {
   const searchParams = useSearchParams();
